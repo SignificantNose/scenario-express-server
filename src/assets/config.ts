@@ -8,6 +8,9 @@ interface AppConfig {
     accessKeyId: string;
     accessKeySecret: string;
     bucketName: string;
+  },
+  db: {
+    url: string;
   }
 }
 
@@ -20,6 +23,9 @@ const config: AppConfig = {
     accessKeySecret: process.env.AUDIO_STORAGE_ACCESS_KEY_SECRET || "supersecretpassword",
     bucketName: process.env.AUDIO_STORAGE_BUCKET_NAME || "audio-uploads"
   },
+  db: {
+    url: process.env.DATABASE_URL || "postgres://user:password@localhost:5432/mydb"
+  }
 };
 
 export default config;

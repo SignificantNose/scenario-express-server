@@ -8,3 +8,6 @@ start-dev:
 build:
 	tsc
 	pkg -t node20-$(PLATFORM)-x64 ./dist/index.js --debug
+
+run-migrations:
+	sqlx migrate run

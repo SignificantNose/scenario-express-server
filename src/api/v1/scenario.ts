@@ -1,174 +1,219 @@
-import * as v from 'valibot';
-import { ScenarioFilterSchema } from '@models/scenario/filter.model';
-import { CreateScenarioDataSchema } from '@models/scenario/create-scenario-data.model';
-import { ListScenarioDataResponse, ScenarioData } from '@models/scenario/list-scenario-data.model';
-import { UpdateScenarioDataSchema } from '@models/scenario/update-scenario-data.model';
-import { validateBody } from 'api/middleware/validation';
-import { Router } from 'express';
+import { Router } from "express";
+import { validateBody } from "api/middleware/validation";
+import { CreateScenarioDataSchema } from "@models/scenario/create-scenario-data.model";
+import { pool } from "interface/db";
+import { UpdateScenarioDataSchema } from "@models/scenario/update-scenario-data.model";
 
 const api = Router();
-let scenarios: ListScenarioDataResponse = [
-  {
-    id: 1,
-    name: 'abc',
-    createdAt: '2025-09-10T10:15:30',
-    updatedAt: '2025-09-11T10:15:30',
-    emitters: [{ id: 1, position: { x: 1, y: 1, z: 2 }, audioFileUri: null }],
-    listeners: [{ id: 1, position: { x: 1, y: 1, z: 1 } }],
-  },
-  {
-    id: 2,
-    name: 'abcd',
-    createdAt: '2025-09-12T10:15:30',
-    updatedAt: '2025-09-13T10:15:30',
-    emitters: [{ id: 1, position: { x: 1, y: 1, z: 2 }, audioFileUri: null }],
-    listeners: [{ id: 1, position: { x: 1, y: 1, z: 1 } }],
-  },
-  {
-    id: 3,
-    name: 'abcde',
-    createdAt: '2025-09-14T10:15:30',
-    updatedAt: '2025-09-15T10:15:30',
-    emitters: [{ id: 1, position: { x: 1, y: 1, z: 2 }, audioFileUri: null }],
-    listeners: [{ id: 1, position: { x: 1, y: 1, z: 1 } }],
-  },
-  {
-    id: 4,
-    name: 'abcdef',
-    createdAt: '2025-09-16T10:15:30',
-    updatedAt: '2025-09-17T10:15:30',
-    emitters: [{ id: 1, position: { x: 1, y: 1, z: 2 }, audioFileUri: null }],
-    listeners: [{ id: 1, position: { x: 1, y: 1, z: 1 } }],
-  },
-];
 
-let nextScenarioId = Math.max(...scenarios.map((s) => s.id)) + 1;
+api.post("/", validateBody(CreateScenarioDataSchema), async (req, res) => {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
 
-api.post('/', validateBody(CreateScenarioDataSchema), async (req, res) => {
-  const now = new Date().toISOString();
-  const scenario: ScenarioData = {
-    ...req.body,
-    id: nextScenarioId++,
-    createdAt: now,
-    updatedAt: now,
-  };
-  scenarios.push(scenario);
-  res.status(201).json({ message: 'Scenario saved', scenario });
-});
+    const now = new Date().toISOString();
+    const { name, emitters, listeners } = req.body;
 
-api.get('/', async (req, res) => {
-  const query = req.query;
+    const { rows } = await client.query(
+      `INSERT INTO scenarios(name, created_at, updated_at) VALUES ($1, $2, $3) RETURNING id`,
+      [name, now, now]
+    );
+    const scenarioId = rows[0].id;
 
-  const cleanStringValue = (value: any) => {
-    if (typeof value === 'string' && value.startsWith('"') && value.endsWith('"')) {
-      return value.slice(1, -1);
+    for (const emitter of emitters) {
+      await client.query(
+        `INSERT INTO emitters(scenario_id, x, y, z, audio_file_uri) VALUES ($1, $2, $3, $4, $5)`,
+        [scenarioId, emitter.position.x, emitter.position.y, emitter.position.z, emitter.audioFileUri]
+      );
     }
-    return value;
-  };
 
-  const rawFilter = {
-    name: cleanStringValue(query['name']),
-    createdAfter: cleanStringValue(query['createdAfter']),
-    createdBefore: cleanStringValue(query['createdBefore']),
-    updatedAfter: cleanStringValue(query['updatedAfter']),
-    updatedBefore: cleanStringValue(query['updatedBefore']),
-    minDevices: query['minDevices'] ? Number(query['minDevices']) : undefined,
-    maxDevices: query['maxDevices'] ? Number(query['maxDevices']) : undefined,
-  };
+    for (const listener of listeners) {
+      await client.query(
+        `INSERT INTO listeners(scenario_id, x, y, z) VALUES ($1, $2, $3, $4)`,
+        [scenarioId, listener.position.x, listener.position.y, listener.position.z]
+      );
+    }
 
-  const result = v.safeParse(ScenarioFilterSchema, rawFilter);
-
-  if (!result.success) {
-    return res.status(400).json({ error: 'Invalid filter', details: result.issues });
+    await client.query("COMMIT");
+    res.status(201).json({ message: "Scenario saved", id: scenarioId });
+  } catch (err) {
+    await client.query("ROLLBACK");
+    console.error(err);
+    res.status(500).json({ error: "Failed to save scenario" });
+  } finally {
+    client.release();
   }
-
-  const filter = result.output;
-
-  let filtered = scenarios;
-
-  if (filter.name) {
-    filtered = filtered.filter((s) => s.name.toLowerCase().includes(filter.name!.toLowerCase()));
-  }
-
-  if (filter.createdAfter) {
-    filtered = filtered.filter((s) => new Date(s.createdAt) >= new Date(filter.createdAfter!));
-  }
-  if (filter.createdBefore) {
-    filtered = filtered.filter((s) => new Date(s.createdAt) <= new Date(filter.createdBefore!));
-  }
-
-  if (filter.updatedAfter) {
-    filtered = filtered.filter((s) => new Date(s.updatedAt) >= new Date(filter.updatedAfter!));
-  }
-  if (filter.updatedBefore) {
-    filtered = filtered.filter((s) => new Date(s.updatedAt) <= new Date(filter.updatedBefore!));
-  }
-
-  if (filter.minDevices !== undefined) {
-    filtered = filtered.filter((s) => s.listeners.length + s.emitters.length >= filter.minDevices!);
-  }
-  if (filter.maxDevices !== undefined) {
-    filtered = filtered.filter((s) => s.listeners.length + s.emitters.length <= filter.maxDevices!);
-  }
-
-  return res.json(filtered);
 });
 
-api.get('/:id', async (req, res) => {
-  const id = Number(req.params.id);
+api.get("/", async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const { name, createdAfter, createdBefore, updatedAfter, updatedBefore, minDevices, maxDevices } = req.query;
 
-  if (isNaN(id)) {
-    return res.status(400).json({ error: 'Invalid scenario id' });
+    const filters: string[] = [];
+    const values: any[] = [];
+    let idx = 1;
+
+    if (name) {
+      filters.push(`name ILIKE $${idx++}`);
+      values.push(`%${name}%`);
+    }
+    if (createdAfter) {
+      filters.push(`created_at >= $${idx++}`);
+      values.push(new Date(createdAfter as string));
+    }
+    if (createdBefore) {
+      filters.push(`created_at <= $${idx++}`);
+      values.push(new Date(createdBefore as string));
+    }
+    if (updatedAfter) {
+      filters.push(`updated_at >= $${idx++}`);
+      values.push(new Date(updatedAfter as string));
+    }
+    if (updatedBefore) {
+      filters.push(`updated_at <= $${idx++}`);
+      values.push(new Date(updatedBefore as string));
+    }
+
+    const whereClause = filters.length ? `WHERE ${filters.join(" AND ")}` : "";
+
+    const { rows: scenarios } = await client.query(`SELECT * FROM scenarios ${whereClause} ORDER BY id`);
+
+    const results = [];
+    for (const s of scenarios) {
+      const { rows: emitters } = await client.query(
+        `SELECT * FROM emitters WHERE scenario_id=$1`,
+        [s.id]
+      );
+      const { rows: listeners } = await client.query(
+        `SELECT * FROM listeners WHERE scenario_id=$1`,
+        [s.id]
+      );
+
+      const totalDevices = emitters.length + listeners.length;
+      if ((minDevices && totalDevices < Number(minDevices)) || (maxDevices && totalDevices > Number(maxDevices))) {
+        continue;
+      }
+
+      results.push({
+        ...s,
+        emitters: emitters.map((e) => ({
+          id: e.id,
+          position: { x: e.x, y: e.y, z: e.z },
+          audioFileUri: e.audio_file_uri,
+        })),
+        listeners: listeners.map((l) => ({
+          id: l.id,
+          position: { x: l.x, y: l.y, z: l.z },
+        })),
+      });
+    }
+
+    res.json(results);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Failed to fetch scenarios" });
+  } finally {
+    client.release();
   }
-
-  const scenario = scenarios.find((s) => s.id === id);
-
-  if (!scenario) {
-    return res.status(404).json({ error: 'Scenario not found' });
-  }
-
-  return res.json(scenario);
 });
 
-api.put('/:id', validateBody(UpdateScenarioDataSchema), async (req, res) => {
-  const id = Number(req.params['id']);
-  if (isNaN(id)) {
-    return res.status(400).json({ error: 'Invalid scenario id' });
+api.get("/:id", async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const id = Number(req.params.id);
+    if (isNaN(id)) return res.status(400).json({ error: "Invalid scenario id" });
+
+    const { rows: scenarioRows } = await client.query(`SELECT * FROM scenarios WHERE id=$1`, [id]);
+    if (!scenarioRows.length) return res.status(404).json({ error: "Scenario not found" });
+
+    const s = scenarioRows[0];
+    const { rows: emitters } = await client.query(`SELECT * FROM emitters WHERE scenario_id=$1`, [s.id]);
+    const { rows: listeners } = await client.query(`SELECT * FROM listeners WHERE scenario_id=$1`, [s.id]);
+
+    res.json({
+      ...s,
+      emitters: emitters.map((e) => ({
+        id: e.id,
+        position: { x: e.x, y: e.y, z: e.z },
+        audioFileUri: e.audio_file_uri,
+      })),
+      listeners: listeners.map((l) => ({
+        id: l.id,
+        position: { x: l.x, y: l.y, z: l.z },
+      })),
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Failed to fetch scenario" });
+  } finally {
+    client.release();
   }
-
-  const updated = req.body;
-
-  const index = scenarios.findIndex((s) => s.id === id);
-  if (index === -1) {
-    return res.status(404).json({ error: 'Scenario not found' });
-  }
-
-  scenarios[index] = {
-    ...scenarios[index],
-    name: updated.name,
-    emitters: updated.emitters,
-    listeners: updated.listeners,
-    updatedAt: new Date().toISOString(),
-  };
-
-  return res.status(200).json(scenarios[index]);
 });
 
-api.delete('/:id', async (req, res) => {
-  const id = Number(req.params.id);
+api.put("/:id", validateBody(UpdateScenarioDataSchema), async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const id = Number(req.params.id);
+    if (isNaN(id)) return res.status(400).json({ error: "Invalid scenario id" });
 
-  if (isNaN(id)) {
-    return res.status(400).json({ error: 'Invalid scenario id' });
+    const { name, emitters, listeners } = req.body;
+
+    await client.query("BEGIN");
+
+    const { rowCount } = await client.query(
+      `UPDATE scenarios SET name=$1, updated_at=$2 WHERE id=$3`,
+      [name, new Date().toISOString(), id]
+    );
+    if (!rowCount) {
+      await client.query("ROLLBACK");
+      return res.status(404).json({ error: "Scenario not found" });
+    }
+
+    await client.query(`DELETE FROM emitters WHERE scenario_id=$1`, [id]);
+    await client.query(`DELETE FROM listeners WHERE scenario_id=$1`, [id]);
+
+    for (const e of emitters) {
+      await client.query(
+        `INSERT INTO emitters(scenario_id, x, y, z, audio_file_uri) VALUES ($1,$2,$3,$4,$5)`,
+        [id, e.position.x, e.position.y, e.position.z, e.audioFileUri]
+      );
+    }
+    for (const l of listeners) {
+      await client.query(
+        `INSERT INTO listeners(scenario_id, x, y, z) VALUES ($1,$2,$3,$4)`,
+        [id, l.position.x, l.position.y, l.position.z]
+      );
+    }
+
+    await client.query("COMMIT");
+    res.json({ message: "Scenario updated" });
+  } catch (err) {
+    await client.query("ROLLBACK");
+    console.error(err);
+    res.status(500).json({ error: "Failed to update scenario" });
+  } finally {
+    client.release();
   }
+});
 
-  const index = scenarios.findIndex((s) => s.id === id);
-  if (index === -1) {
-    return res.status(404).json({ error: 'Scenario not found' });
+api.delete("/:id", async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const id = Number(req.params.id);
+    if (isNaN(id)) return res.status(400).json({ error: "Invalid scenario id" });
+
+    const { rowCount } = await client.query(`DELETE FROM scenarios WHERE id=$1`, [id]);
+    if (!rowCount) return res.status(404).json({ error: "Scenario not found" });
+
+    res.json({ success: true });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Failed to delete scenario" });
+  } finally {
+    client.release();
   }
-
-  const deletedScenario = scenarios.splice(index, 1)[0];
-
-  return res.json({ success: true, deleted: deletedScenario });
 });
 
 export default api;
+

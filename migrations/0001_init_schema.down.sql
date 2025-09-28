@@ -1,0 +1,3 @@
+DROP TABLE IF EXISTS listeners;
+DROP TABLE IF EXISTS emitters;
+DROP TABLE IF EXISTS scenarios;
