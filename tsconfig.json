@@ -11,7 +11,8 @@
     "skipLibCheck": true,
     "baseUrl": "src",
     "paths": {
-      "@models/*": ["core/models/*"]
+      "@models/*": ["core/models/*"],
+      "@assets/*": ["assets/*"]
     }
   },
   "include": ["src"],

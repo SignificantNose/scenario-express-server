@@ -6,7 +6,7 @@ import fs from 'fs';
 const api = Router();
 
 
-const UPLOAD_DIR = '/home/significantnose/audio-uploads';
+const UPLOAD_DIR = '/home/nose/audio-uploads';
 if (!fs.existsSync(UPLOAD_DIR)) fs.mkdirSync(UPLOAD_DIR);
 
 const storage = multer.diskStorage({
