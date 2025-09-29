@@ -48,66 +48,127 @@ api.post("/", validateBody(CreateScenarioDataSchema), async (req, res) => {
 api.get("/", async (req, res) => {
   const client = await pool.connect();
   try {
-    const { name, createdAfter, createdBefore, updatedAfter, updatedBefore, minDevices, maxDevices } = req.query;
+    const toStringParam = (v: any): string | undefined => {
+      if (v == null) return undefined;
+      if (Array.isArray(v)) v = v[0];
+      return typeof v === "string" ? v : undefined;
+    };
+
+    const nameParam = toStringParam(req.query.name);
+    const createdAfterParam = toStringParam(req.query.createdAfter);
+    const createdBeforeParam = toStringParam(req.query.createdBefore);
+    const updatedAfterParam = toStringParam(req.query.updatedAfter);
+    const updatedBeforeParam = toStringParam(req.query.updatedBefore);
+    const minDevicesParam = toStringParam(req.query.minDevices);
+    const maxDevicesParam = toStringParam(req.query.maxDevices);
 
     const filters: string[] = [];
     const values: any[] = [];
     let idx = 1;
 
-    if (name) {
-      filters.push(`name ILIKE $${idx++}`);
-      values.push(`%${name}%`);
+    if (nameParam) {
+      filters.push(`s.name ILIKE $${idx++}`);
+      values.push(`%${nameParam}%`);
     }
-    if (createdAfter) {
-      filters.push(`created_at >= $${idx++}`);
-      values.push(new Date(createdAfter as string));
+
+    const pushDateFilter = (col: string, str?: string, op: string = ">=") => {
+      if (!str) return true;
+      const d = new Date(str);
+      if (isNaN(d.getTime())) {
+        res.status(400).json({ error: `Invalid date for ${col}` });
+        return false;
+      }
+      filters.push(`s.${col} ${op} $${idx++}`);
+      values.push(d.toISOString());
+      return true;
+    };
+
+    if (!(pushDateFilter("created_at", createdAfterParam, ">="))) { return; }
+    if (!(pushDateFilter("created_at", createdBeforeParam, "<="))) { return; }
+    if (!(pushDateFilter("updated_at", updatedAfterParam, ">="))) { return; }
+    if (!(pushDateFilter("updated_at", updatedBeforeParam, "<="))) { return; }
+
+    const minDevices = minDevicesParam ? Number(minDevicesParam) : undefined;
+    const maxDevices = maxDevicesParam ? Number(maxDevicesParam) : undefined;
+
+    if (minDevices != null && !Number.isFinite(minDevices)) {
+      return res.status(400).json({ error: "Invalid minDevices" });
     }
-    if (createdBefore) {
-      filters.push(`created_at <= $${idx++}`);
-      values.push(new Date(createdBefore as string));
-    }
-    if (updatedAfter) {
-      filters.push(`updated_at >= $${idx++}`);
-      values.push(new Date(updatedAfter as string));
-    }
-    if (updatedBefore) {
-      filters.push(`updated_at <= $${idx++}`);
-      values.push(new Date(updatedBefore as string));
+    if (maxDevices != null && !Number.isFinite(maxDevices)) {
+      return res.status(400).json({ error: "Invalid maxDevices" });
     }
 
     const whereClause = filters.length ? `WHERE ${filters.join(" AND ")}` : "";
-
-    const { rows: scenarios } = await client.query(`SELECT * FROM scenarios ${whereClause} ORDER BY id`);
-
-    const results = [];
-    for (const s of scenarios) {
-      const { rows: emitters } = await client.query(
-        `SELECT * FROM emitters WHERE scenario_id=$1`,
-        [s.id]
-      );
-      const { rows: listeners } = await client.query(
-        `SELECT * FROM listeners WHERE scenario_id=$1`,
-        [s.id]
-      );
-
-      const totalDevices = emitters.length + listeners.length;
-      if ((minDevices && totalDevices < Number(minDevices)) || (maxDevices && totalDevices > Number(maxDevices))) {
-        continue;
-      }
-
-      results.push({
-        ...s,
-        emitters: emitters.map((e) => ({
-          id: e.id,
-          position: { x: e.x, y: e.y, z: e.z },
-          audioFileUri: e.audio_file_uri,
-        })),
-        listeners: listeners.map((l) => ({
-          id: l.id,
-          position: { x: l.x, y: l.y, z: l.z },
-        })),
-      });
+    const havingClauses: string[] = [];
+    if (minDevices != null) {
+      havingClauses.push(`COUNT(DISTINCT e.id) + COUNT(DISTINCT l.id) >= ${minDevices}`);
     }
+    if (maxDevices != null) {
+      havingClauses.push(`COUNT(DISTINCT e.id) + COUNT(DISTINCT l.id) <= ${maxDevices}`);
+    }
+    const havingClause = havingClauses.length ? `HAVING ${havingClauses.join(" AND ")}` : "";
+
+    const baseQuery = `
+      SELECT s.id
+      FROM scenarios s
+      LEFT JOIN emitters e ON e.scenario_id = s.id
+      LEFT JOIN listeners l ON l.scenario_id = s.id
+      ${whereClause}
+      GROUP BY s.id
+      ${havingClause}
+      ORDER BY s.id
+    `;
+
+    const { rows: scenarioIds } = await client.query(baseQuery, values);
+
+    if (scenarioIds.length === 0) {
+      return res.json([]);
+    }
+
+    const ids = scenarioIds.map((r: any) => r.id);
+
+    const { rows: scenarios } = await client.query(
+      `SELECT * FROM scenarios WHERE id = ANY($1) ORDER BY id`,
+      [ids]
+    );
+
+    const { rows: emitterRows } = await client.query(
+      `SELECT * FROM emitters WHERE scenario_id = ANY($1)`,
+      [ids]
+    );
+    const { rows: listenerRows } = await client.query(
+      `SELECT * FROM listeners WHERE scenario_id = ANY($1)`,
+      [ids]
+    );
+
+    const emittersByScenario = new Map<number, any[]>();
+    for (const e of emitterRows) {
+      const arr = emittersByScenario.get(e.scenario_id) ?? [];
+      arr.push(e);
+      emittersByScenario.set(e.scenario_id, arr);
+    }
+    const listenersByScenario = new Map<number, any[]>();
+    for (const l of listenerRows) {
+      const arr = listenersByScenario.get(l.scenario_id) ?? [];
+      arr.push(l);
+      listenersByScenario.set(l.scenario_id, arr);
+    }
+
+    const results = scenarios.map((s: any) => ({
+      id: s.id,
+      name: s.name,
+      createdAt: s.created_at?.toISOString?.() ?? s.created_at,
+      updatedAt: s.updated_at?.toISOString?.() ?? s.updated_at,
+      emitters: (emittersByScenario.get(s.id) ?? []).map((e: any) => ({
+        id: e.id,
+        position: { x: e.x, y: e.y, z: e.z },
+        audioFileUri: e.audio_file_uri,
+      })),
+      listeners: (listenersByScenario.get(s.id) ?? []).map((l: any) => ({
+        id: l.id,
+        position: { x: l.x, y: l.y, z: l.z },
+      })),
+    }));
 
     res.json(results);
   } catch (err) {
