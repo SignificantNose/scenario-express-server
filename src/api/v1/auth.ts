@@ -47,7 +47,7 @@ router.get("/me", authenticateJWT, (req: AuthRequest, res) => {
   });
 });
 
-router.post("/register", async (req: Request, res: Response) => {
+router.post("/sign-up", async (req: Request, res: Response) => {
   const { login, password } = req.body;
 
   if (!login || !password) {
@@ -77,7 +77,7 @@ router.post("/register", async (req: Request, res: Response) => {
     sameSite: "none",
   });
 
-  res.status(201).json({ message: "Registration successful", user: { id: newUser.id, login: newUser.login } });
+  res.status(201).json({ message: "Sign up successful", user: { id: newUser.id, login: newUser.login } });
 });
 
 
