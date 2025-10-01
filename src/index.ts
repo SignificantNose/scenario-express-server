@@ -18,8 +18,7 @@ app.use(cors({
 
 app.use("/api/v1/auth", authV1);
 
-// app.use("/api/v1", authenticateJWT, apiV1);
-app.use("/api/v1", apiV1);
+app.use("/api/v1", authenticateJWT, apiV1);
 
 app.listen(config.port, () => {
   console.log(`Backend listening on http://localhost:${config.port}`);
