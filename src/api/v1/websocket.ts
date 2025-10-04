@@ -1,26 +1,12 @@
 import { Server, Socket } from "socket.io";
 import * as scenarioService from "../../services/scenario.service";
-
-interface Emitter {
-  id: number;
-  x: number;
-  y: number;
-  z: number;
-  audioFileUri: string | null;
-}
-
-interface Listener {
-  id: number;
-  x: number;
-  y: number;
-  z: number;
-}
+import { EmitterData, ListenerData } from "@models/scenario/list-scenario-data.model";
 
 interface ScenarioState {
   id: number;
   name: string;
-  emitters: Emitter[];
-  listeners: Listener[];
+  emitters: EmitterData[];
+  listeners: ListenerData[];
 }
 
 const scenarioStates = new Map<number, ScenarioState>();
@@ -43,12 +29,7 @@ export function initWebSocket(io: Server) {
 
       if (!scenarioStates.has(scenarioId)) {
         try {
-          const initialScenarios = await scenarioService.loadScenarioFromDB(scenarioId);
-          const initialStates = {
-            ...initialScenarios,
-            emitters: initialScenarios.emitters.map(e => { return { id: e.id, x: e.position.x, y: e.position.y, z: e.position.z, audioFileUri: e.audioFileUri } }),
-            listeners: initialScenarios.listeners.map(e => { return { id: e.id, x: e.position.x, y: e.position.y, z: e.position.z } })
-          };
+          const initialStates = await scenarioService.loadScenarioFromDB(scenarioId);
           scenarioStates.set(scenarioId, initialStates);
         } catch (err) {
           console.error("Failed to load scenario:", err);
@@ -103,7 +84,7 @@ export function initWebSocket(io: Server) {
       socket.rooms.forEach((roomName) => {
         if (roomName.startsWith("scenario:")) {
           const scenarioId = Number(roomName.split(":")[1]);
-          const roomSize = getRoomSize(io, roomName) - 1; // minus self
+          const roomSize = getRoomSize(io, roomName) - 1;
           if (roomSize <= 0) {
             console.log(`Dropping scenario state for ${scenarioId}`);
             scenarioStates.delete(scenarioId);
