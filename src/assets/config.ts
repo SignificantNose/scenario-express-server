@@ -1,7 +1,7 @@
 import "dotenv/config";
 
 interface AppConfig {
-  port: number;
+  apiPort: number;
   audioFileStorage: {
     url: string;
     region: string;
@@ -15,7 +15,7 @@ interface AppConfig {
 }
 
 const config: AppConfig = {
-  port: parseInt(process.env.PORT || "3000", 10),
+  apiPort: parseInt(process.env.API_PORT || "3000", 10),
   audioFileStorage: {
     url: process.env.AUDIO_STORAGE_URL || "http://localhost:9000",
     region: process.env.AUDIO_STORAGE_REGION || "us-east-1",
