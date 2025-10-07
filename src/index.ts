@@ -8,6 +8,8 @@ import { authenticateJWT } from "api/middleware/auth";
 import { Server } from "socket.io";
 import { initWebSocket } from "api/v1/websocket";
 import http from "http";
+import { graphqlHTTP } from "express-graphql";
+import { schema } from "graphql/schema";
 
 const app = express();
 
@@ -20,6 +22,11 @@ app.use(cors({
 
 app.use("/api/v1/auth", authV1);
 app.use("/api/v1", authenticateJWT, apiV1);
+app.use('/graphql', graphqlHTTP({
+  schema,
+  graphiql: true
+}));
+
 
 const server = http.createServer(app);
 
