@@ -1,4 +1,14 @@
-import { GraphQLFloat, GraphQLInt, GraphQLList, GraphQLObjectType, GraphQLSchema, GraphQLString } from "graphql";
+import {
+  GraphQLFloat,
+  GraphQLInt,
+  GraphQLList,
+  GraphQLObjectType,
+  GraphQLSchema,
+  GraphQLString,
+  GraphQLInputObjectType,
+  GraphQLNonNull,
+  GraphQLBoolean,
+} from 'graphql';
 import * as scenarioService from '../services/scenario.service';
 
 const PositionType = new GraphQLObjectType({
@@ -15,8 +25,8 @@ const EmitterType = new GraphQLObjectType({
   fields: {
     id: { type: GraphQLInt },
     position: { type: PositionType },
-    audioFileUri: { type: GraphQLString }
-  }
+    audioFileUri: { type: GraphQLString },
+  },
 });
 
 const ListenerType = new GraphQLObjectType({
@@ -39,18 +49,59 @@ const ScenarioType = new GraphQLObjectType({
   },
 });
 
+const PositionInputType = new GraphQLInputObjectType({
+  name: 'PositionInput',
+  fields: {
+    x: { type: new GraphQLNonNull(GraphQLFloat) },
+    y: { type: new GraphQLNonNull(GraphQLFloat) },
+    z: { type: new GraphQLNonNull(GraphQLFloat) },
+  },
+});
+
+const EmitterInputType = new GraphQLInputObjectType({
+  name: 'EmitterInput',
+  fields: {
+    id: { type: GraphQLInt },
+    position: { type: new GraphQLNonNull(PositionInputType) },
+    audioFileUri: { type: GraphQLString },
+  },
+});
+
+const ListenerInputType = new GraphQLInputObjectType({
+  name: 'ListenerInput',
+  fields: {
+    id: { type: GraphQLInt },
+    position: { type: new GraphQLNonNull(PositionInputType) },
+  },
+});
+
+const ScenarioFilterInput = new GraphQLInputObjectType({
+  name: 'ScenarioFilterInput',
+  fields: {
+    name: { type: GraphQLString },
+    createdAfter: { type: GraphQLString },
+    createdBefore: { type: GraphQLString },
+    updatedAfter: { type: GraphQLString },
+    updatedBefore: { type: GraphQLString },
+    minDevices: { type: GraphQLInt },
+    maxDevices: { type: GraphQLInt },
+  },
+});
 
 const RootQuery = new GraphQLObjectType({
   name: 'Query',
   fields: {
     scenario: {
       type: ScenarioType,
-      args: { id: { type: GraphQLInt } },
+      args: { id: { type: new GraphQLNonNull(GraphQLInt) } },
       resolve: (_, args) => scenarioService.loadScenarioFromDB(args.id),
     },
     scenarios: {
       type: new GraphQLList(ScenarioType),
-      resolve: () => scenarioService.listScenarios({}),
+      args: {
+        filters: { type: ScenarioFilterInput },
+      },
+      resolve: (_, args) => scenarioService.listScenarios(args.filters || {}),
     },
   },
 });
@@ -61,17 +112,50 @@ const Mutation = new GraphQLObjectType({
     createScenario: {
       type: GraphQLInt,
       args: {
-        name: { type: GraphQLString },
-        emitters: { type: GraphQLString },
-        listeners: { type: GraphQLString },
+        name: { type: new GraphQLNonNull(GraphQLString) },
+        emitters: { type: new GraphQLList(EmitterInputType) },
+        listeners: { type: new GraphQLList(ListenerInputType) },
       },
       resolve: async (_, args) => {
-        const emitters = JSON.parse(args.emitters);
-        const listeners = JSON.parse(args.listeners);
-        return await scenarioService.createScenario({ name: args.name, emitters, listeners });
+        return await scenarioService.createScenario({
+          name: args.name,
+          emitters: args.emitters || [],
+          listeners: args.listeners || [],
+        });
+      },
+    },
+    updateScenario: {
+      type: GraphQLBoolean,
+      args: {
+        id: { type: new GraphQLNonNull(GraphQLInt) },
+        name: { type: new GraphQLNonNull(GraphQLString) },
+        emitters: { type: new GraphQLList(EmitterInputType) },
+        listeners: { type: new GraphQLList(ListenerInputType) },
+      },
+      resolve: async (_, args) => {
+        await scenarioService.updateScenario(args.id, {
+          name: args.name,
+          emitters: args.emitters || [],
+          listeners: args.listeners || [],
+        });
+        return true;
+      },
+    },
+    deleteScenario: {
+      type: GraphQLBoolean,
+      args: {
+        id: { type: new GraphQLNonNull(GraphQLInt) },
+      },
+      resolve: async (_, args) => {
+        await scenarioService.deleteScenario(args.id);
+        return true;
       },
     },
   },
 });
 
-export const schema = new GraphQLSchema({ query: RootQuery, mutation: Mutation });
+export const schema = new GraphQLSchema({
+  query: RootQuery,
+  mutation: Mutation,
+});
+
